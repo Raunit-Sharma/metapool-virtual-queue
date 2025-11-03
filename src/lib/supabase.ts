@@ -22,7 +22,7 @@ export interface Participant {
   name: string;
   roll_no: string;
   registered_at: string;
-  status: 'waiting' | 'called' | 'completed';
+  status: 'waiting' | 'done' | 'skipped';
 }
 
 export interface QueueSettings {

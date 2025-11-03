@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Users, Clock, TrendingUp, RefreshCw } from 'lucide-react';
+import { Users, Clock, TrendingUp, RefreshCw, UserPlus } from 'lucide-react';
 import { supabase, type Participant, type QueueSettings } from '../lib/supabase';
 
 export default function PublicQueue() {
@@ -7,12 +7,39 @@ export default function PublicQueue() {
   const [queueSettings, setQueueSettings] = useState<QueueSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [formData, setFormData] = useState({ name: '', rollNo: '' });
+  const [registering, setRegistering] = useState(false);
+  const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
     loadData();
-    // Auto-refresh every 10 seconds
+    
+    // Set up real-time subscription for participants
+    const participantsSubscription = supabase
+      .channel('public_participants_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'participants' }, () => {
+        loadData();
+      })
+      .subscribe();
+
+    // Set up real-time subscription for queue settings
+    const queueSubscription = supabase
+      .channel('public_queue_settings_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'queue_settings' }, () => {
+        loadData();
+      })
+      .subscribe();
+    
+    // Auto-refresh every 10 seconds as fallback
     const interval = setInterval(loadData, 10000);
-    return () => clearInterval(interval);
+    
+    return () => {
+      clearInterval(interval);
+      participantsSubscription.unsubscribe();
+      queueSubscription.unsubscribe();
+    };
   }, []);
 
   const loadData = async () => {
@@ -37,10 +64,41 @@ export default function PublicQueue() {
     loadData();
   };
 
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccessMessage('');
+    setRegistering(true);
+
+    try {
+      const { error: insertError } = await supabase
+        .from('participants')
+        .insert([{ name: formData.name, roll_no: formData.rollNo }]);
+
+      if (insertError) throw insertError;
+
+      setSuccessMessage('Successfully registered! Your token number will appear shortly.');
+      setFormData({ name: '', rollNo: '' });
+      setTimeout(() => {
+        setShowRegisterForm(false);
+        setSuccessMessage('');
+        loadData();
+      }, 2000);
+    } catch (err: any) {
+      if (err.message?.includes('duplicate') || err.message?.includes('unique')) {
+        setError('This roll number is already registered!');
+      } else {
+        setError(err.message || 'Failed to register. Please try again.');
+      }
+    } finally {
+      setRegistering(false);
+    }
+  };
+
   const currentToken = queueSettings?.current_token || 0;
   const currentParticipant = participants.find(p => p.token_number === currentToken);
-  const nextParticipant = participants.find(p => p.token_number === currentToken + 1);
-  const waitingCount = participants.filter(p => p.token_number > currentToken && p.status !== 'completed').length;
+  const nextParticipant = participants.find(p => p.token_number === currentToken + 1 && p.status === 'waiting');
+  const waitingCount = participants.filter(p => p.token_number > currentToken && p.status === 'waiting').length;
 
   if (loading) {
     return (
@@ -59,15 +117,98 @@ export default function PublicQueue() {
             METAPOOL
           </h1>
           <p className="text-lg sm:text-xl text-blue-200 mb-4">Virtual Queue System</p>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
+            <button
+              onClick={() => setShowRegisterForm(!showRegisterForm)}
+              className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition font-semibold shadow-lg"
+            >
+              <UserPlus className="w-5 h-5" />
+              Join Queue
+            </button>
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
         </div>
+
+        {/* Registration Form */}
+        {showRegisterForm && (
+          <div className="bg-white/10 backdrop-blur-md rounded-xl shadow-xl p-4 sm:p-6 border border-white/20 mb-6 sm:mb-8">
+            <h2 className="text-2xl font-bold text-white mb-4">Register for Queue</h2>
+            <form onSubmit={handleRegister} className="space-y-4">
+              <div>
+                <label htmlFor="name" className="block text-sm font-medium text-blue-200 mb-2">
+                  Full Name
+                </label>
+                <input
+                  id="name"
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  required
+                  className="w-full px-4 py-3 text-gray-900 bg-white rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  placeholder="Enter your full name"
+                  disabled={registering}
+                />
+              </div>
+              <div>
+                <label htmlFor="rollNo" className="block text-sm font-medium text-blue-200 mb-2">
+                  Roll Number
+                </label>
+                <input
+                  id="rollNo"
+                  type="text"
+                  value={formData.rollNo}
+                  onChange={(e) => setFormData({ ...formData, rollNo: e.target.value })}
+                  required
+                  className="w-full px-4 py-3 text-gray-900 bg-white rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none"
+                  placeholder="Enter your roll number"
+                  disabled={registering}
+                />
+              </div>
+              
+              {error && (
+                <div className="bg-red-500/20 border border-red-500 text-white px-4 py-3 rounded-lg text-sm">
+                  {error}
+                </div>
+              )}
+              
+              {successMessage && (
+                <div className="bg-green-500/20 border border-green-500 text-white px-4 py-3 rounded-lg text-sm">
+                  {successMessage}
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button
+                  type="submit"
+                  disabled={registering}
+                  className="flex-1 bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {registering ? 'Registering...' : 'Register'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRegisterForm(false);
+                    setError('');
+                    setSuccessMessage('');
+                    setFormData({ name: '', rollNo: '' });
+                  }}
+                  disabled={registering}
+                  className="px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-lg font-semibold transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
         {/* Stats Cards - Mobile Optimized */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-6 mb-6 sm:mb-8">
@@ -155,8 +296,9 @@ export default function PublicQueue() {
             <div className="space-y-2 sm:space-y-3">
               {participants.map((participant) => {
                 const isCurrentToken = participant.token_number === currentToken;
-                const isCompleted = participant.token_number < currentToken || participant.status === 'completed';
-                const isNext = participant.token_number === currentToken + 1;
+                const isDone = participant.status === 'done';
+                const isSkipped = participant.status === 'skipped';
+                const isNext = participant.token_number === currentToken + 1 && participant.status === 'waiting';
 
                 return (
                   <div
@@ -165,8 +307,9 @@ export default function PublicQueue() {
                       rounded-lg sm:rounded-xl p-3 sm:p-4 transition-all
                       ${isCurrentToken ? 'bg-green-500/30 border-2 border-green-400 shadow-lg scale-105' : ''}
                       ${isNext ? 'bg-orange-500/30 border-2 border-orange-400' : ''}
-                      ${!isCurrentToken && !isNext && !isCompleted ? 'bg-white/5 border border-white/10' : ''}
-                      ${isCompleted ? 'bg-gray-500/20 border border-gray-500/30 opacity-60' : ''}
+                      ${isSkipped ? 'bg-yellow-500/20 border border-yellow-400/40' : ''}
+                      ${isDone ? 'bg-gray-500/20 border border-gray-500/30 opacity-60' : ''}
+                      ${!isCurrentToken && !isNext && !isDone && !isSkipped ? 'bg-white/5 border border-white/10' : ''}
                     `}
                   >
                     <div className="flex items-center justify-between gap-3">
@@ -175,8 +318,9 @@ export default function PublicQueue() {
                           text-2xl sm:text-3xl font-bold px-3 sm:px-4 py-1 sm:py-2 rounded-lg
                           ${isCurrentToken ? 'bg-green-600 text-white' : ''}
                           ${isNext ? 'bg-orange-600 text-white' : ''}
-                          ${!isCurrentToken && !isNext ? 'bg-blue-600 text-white' : ''}
-                          ${isCompleted ? 'bg-gray-600 text-gray-300' : ''}
+                          ${isSkipped ? 'bg-yellow-600 text-white' : ''}
+                          ${isDone ? 'bg-gray-600 text-gray-300' : ''}
+                          ${!isCurrentToken && !isNext && !isDone && !isSkipped ? 'bg-blue-600 text-white' : ''}
                         `}>
                           #{participant.token_number}
                         </div>
@@ -200,12 +344,17 @@ export default function PublicQueue() {
                             Next
                           </span>
                         )}
-                        {isCompleted && (
+                        {isDone && (
                           <span className="px-2 sm:px-3 py-1 text-xs font-semibold bg-gray-600 text-gray-200 rounded-full whitespace-nowrap">
-                            {participant.status === 'completed' ? 'Completed' : 'Done'}
+                            Done
                           </span>
                         )}
-                        {!isCurrentToken && !isNext && !isCompleted && (
+                        {isSkipped && (
+                          <span className="px-2 sm:px-3 py-1 text-xs font-semibold bg-yellow-600 text-white rounded-full whitespace-nowrap">
+                            Skipped
+                          </span>
+                        )}
+                        {!isCurrentToken && !isNext && !isDone && !isSkipped && (
                           <span className="px-2 sm:px-3 py-1 text-xs font-semibold bg-blue-600 text-white rounded-full whitespace-nowrap">
                             Waiting
                           </span>
