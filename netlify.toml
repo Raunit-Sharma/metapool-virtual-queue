@@ -1,0 +1,25 @@
+# Netlify Configuration
+# This file configures Netlify deployment settings
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Environment variables (set in Netlify dashboard)
+# VITE_SUPABASE_URL = your_supabase_url
+# VITE_SUPABASE_ANON_KEY = your_supabase_anon_key
+
+# Redirect all routes to index.html for SPA routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Headers for security
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
